@@ -1,6 +1,6 @@
 import std/asyncdispatch
 import std/strformat
-import private/libgpiod
+import nim_gpiod/libgpiod
 
 type
   Edge* {.pure.} = enum
