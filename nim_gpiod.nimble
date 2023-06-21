@@ -4,9 +4,8 @@ version       = "0.2.0"
 author        = "Takeyoshi Kikuchi"
 description   = "Nim libgpiod bindings"
 license       = "MIT"
-srcDir        = "src"
-binDir        = "bin"
 bin           = @["nim_gpiod"]
+installFiles  = @["nim_gpiod.nim", "nim_gpiodpkg/libgpiod.nim"]
 
 # Dependencies
 
