@@ -78,7 +78,7 @@ proc is_free*(line: GpiodLine): cint {.libgpiod, line_prefixed.}
 proc get_value*(line: GpiodLine): cint {.libgpiod, line_prefixed.}
 proc set_value*(line: GpiodLine, value: cint): cint {.libgpiod, line_prefixed.}
 
-proc `=destroy`(line: var GpiodLineStruct) =
+proc `=destroy`(line: GpiodLineStruct) =
   (addr line).release()
 
 type

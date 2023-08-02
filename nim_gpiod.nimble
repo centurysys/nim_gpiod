@@ -1,6 +1,6 @@
 # Package
 
-version       = "0.2.0"
+version       = "1.0.0"
 author        = "Takeyoshi Kikuchi"
 description   = "Nim libgpiod bindings"
 license       = "MIT"
@@ -9,4 +9,4 @@ installFiles  = @["nim_gpiod.nim", "nim_gpiodpkg/libgpiod.nim"]
 
 # Dependencies
 
-requires "nim >= 1.6.12"
+requires "nim >= 2.0.0"
