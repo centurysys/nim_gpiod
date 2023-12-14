@@ -21,9 +21,12 @@ type
 #-------------------------------------------------------------------------------
 #
 #-------------------------------------------------------------------------------
-proc `=destroy`(self: var AsyncGpioObj) =
+proc `=destroy`(self: AsyncGpioObj) =
   if self.fd != AsyncFD(-1):
-    self.fd.unregister()
+    try:
+      self.fd.unregister()
+    except:
+      discard
   if self.line.is_requested() == 1:
     self.line.release()
   self.chip.close()
