@@ -60,7 +60,7 @@ proc newGpio*(lineName: string, consumer: string): AsyncGpio =
 #-------------------------------------------------------------------------------
 # API:
 #-------------------------------------------------------------------------------
-proc get_value*(self: AsyncGpio): int =
+proc getValue*(self: AsyncGpio): int =
   let requested = self.line.is_requested()
   if requested != 1:
     discard self.line.request_input(self.consumer.cstring)
@@ -71,16 +71,16 @@ proc get_value*(self: AsyncGpio): int =
 #-------------------------------------------------------------------------------
 #
 #-------------------------------------------------------------------------------
-proc wait_edge(self: AsyncGpio, edge: Edge): Future[Edge] =
+proc waitEdge(self: AsyncGpio, edge: Edge): Future[Edge] =
   var retFuture = newFuture[Edge]("gpiod_event")
 
   proc cb(fd: AsyncFD): bool =
     var event: LineEvent
     discard self.line.event_read(addr event)
-    let edge_val = case event.event_type
+    let edgeVal = case event.event_type
       of EventType.RisingEdge: Edge.Rising
       else: Edge.Falling
-    retFuture.complete(edge_val)
+    retFuture.complete(edgeVal)
     self.fd.unregister()
     self.fd = AsyncFD(-1)
     return true
@@ -103,24 +103,24 @@ proc wait_edge(self: AsyncGpio, edge: Edge): Future[Edge] =
 #-------------------------------------------------------------------------------
 # API:
 #-------------------------------------------------------------------------------
-proc wait_event*(self: AsyncGpio, edge: Edge, debounce_ms: int):
+proc waitEvent*(self: AsyncGpio, edge: Edge, debounce_ms: int):
     Future[Event] {.async.} =
-  var ev_edge: Edge
+  var evEdge: Edge
   if self.fut_edge.isNil:
-    self.fut_edge = self.wait_edge(edge)
-  ev_edge = await self.fut_edge
+    self.fut_edge = self.waitEdge(edge)
+  evEdge = await self.fut_edge
   self.fut_edge = nil
   while true:
-    self.fut_edge = self.wait_edge(edge)
+    self.fut_edge = self.waitEdge(edge)
     let res = await withTimeout(self.fut_edge, debounce_ms)
     if res:
       # maybe chattering occurs
-      ev_edge = self.fut_edge.read()
+      evEdge = self.fut_edge.read()
       self.fut_edge = nil
     else:
       break
-  result.value = self.get_value()
-  result.edge = ev_edge
+  result.value = self.getValue()
+  result.edge = evEdge
 
 
 when isMainModule:
@@ -133,7 +133,7 @@ when isMainModule:
       quit(1)
     while true:
       echo "wait event..."
-      let event = await di0.wait_event(Edge.Both, 10)
+      let event = await di0.waitEvent(Edge.Both, 10)
       let now = now().format("yyyy-MM-dd HH:mm:ss")
       echo &"*** {now}: Event! (edge: {event.edge}, value: {event.value})"
 
