@@ -1,6 +1,6 @@
 # Package
 
-version       = "2.0.0"
+version       = "2.0.1"
 author        = "Takeyoshi Kikuchi"
 description   = "Linux GPIO character device wrapper for Nim"
 license       = "MIT"
