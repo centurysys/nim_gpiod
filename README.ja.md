@@ -1,291 +1,295 @@
 # nim_gpiod
 
-`nim_gpiod` は、Nim 向けの小さな Linux GPIO ライブラリです。
+`nim_gpiod` は Nim 用の小さな Linux GPIO ライブラリです。
 
-GPIO 入力の読み取りと、エッジイベント待ちを扱うための簡単な API を提供します。
-公開 API は従来の `nim_gpiod` に近い形を維持しつつ、内部実装は `libgpiod`
-に依存しない構成へ変更しています。
+GPIO入力値の読み取りと edge event の待機を、できるだけ単純なAPIで扱うことを目的にしています。既存の `nim_gpiod` 利用コードとの互換性はできるだけ残しつつ、実装上は `libgpiod` への依存をなくしています。
 
-この版では、小さな C shim を同梱し、Linux GPIO character device v2 ABI を
-直接使用します。
+このブランチでは、小さな同梱C shimを通して Linux GPIO character device v2 ABI を直接使用します。
 
-## 目的
+## このライブラリの目的
 
-`libgpiod` は v1 と v2 で C API が大きく変わっています。そのため、同じ Nim
-アプリケーションを、`libgpiod` v1 を採用しているディストリビューションと
-v2 を採用しているディストリビューションの両方で扱うと、実装やビルド条件が
-複雑になります。
+`libgpiod` v1 と v2 は C API が大きく異なります。そのため、ディストリビューションごとに入っている `libgpiod` の版が違うと、同じ Nim アプリケーションをビルドする上で問題になりました。
 
-`nim_gpiod` は、その差分を避けるため、kernel の GPIO character device v2 API
-を直接使います。
+`nim_gpiod` は kernel の GPIO character device v2 API を直接使うことで、この差を避けます。
 
-対象 kernel が GPIO chardev v2 を提供していれば、実行環境にある `libgpiod`
-が v1 か v2 か、あるいは `libgpiod` が入っていないかを気にせず使えます。
+対象kernelが GPIO chardev v2 を提供していれば、配布環境に `libgpiod` v1 があるか、v2 があるか、あるいは `libgpiod` がまったく入っていないかをアプリケーション側で気にしなくて済みます。
 
-## 機能
+## 特徴
 
-- GPIO line name によるオープン
-- GPIO chip path と offset によるオープン
-- 入力値の読み取り
-- rising / falling / both edge のイベント待ち
-- active-low 指定
-- イベントメタデータ:
-  - nanosecond 単位の timestamp
+- line name からGPIO lineを開く
+- chip path と offset からGPIO lineを開く
+- GPIO入力値の読み取り
+- rising / falling / both edge event の待機
+- active-low 対応
+- event metadata 対応
+  - nanoseconds単位のtimestamp
   - global sequence number
   - line sequence number
-- `Result` ベースの明示的なエラー処理
-- 従来互換向けの例外 API
-- `libgpiod` への runtime 依存なし
-- 通常ビルド時に Futhark / libclang 不要
+- 旧アプリケーション互換用の `Event.value` フィールド
+- debounce付き旧互換 `waitEvent(edge, debounceMs)` API
+- 明示的なエラー処理用の Result-based API
+- 旧コード向けの exception-based compatibility API
+- 実行時の `libgpiod` 依存なし
+- 通常ビルドでは Futhark/libclang 不要
 
 ## 必要条件
 
 - GPIO character device v2 を持つ Linux kernel
-- 利用可能な `/dev/gpiochipN`
-- Nim ビルド時に C compiler が使えること
+- 使用可能な `/dev/gpiochipN`
+- Nimビルド時に使用できるCコンパイラ
 - Nim
-- Nim package の `results`
+- Nim package `results`
 
-主な想定対象は、Linux 5.10.y 以降の組み込み Linux 環境です。
+現時点では、Linux 5.10.y 以降の組み込みLinux環境を主な対象にしています。
 
-## ディレクトリ構成
+## プロジェクト構成
 
-```text
-src/
-  nim_gpiod.nim
-  nim_gpiod/
-    async_gpio.nim
-    errors.nim
-    types.nim
-    bindings/
-      c_api.nim
-      generated/
-        ngpio.nim
-    shim/
-      ngpio.h
-      ngpio.c
-tests/
-  test_poll_watch.nim
-  test_event_watch.nim
-```
+    src/
+      nim_gpiod.nim
+      nim_gpiod/
+        async_gpio.nim
+        errors.nim
+        types.nim
+        bindings/
+          c_api.nim
+          generated/
+            ngpio.nim
+        shim/
+          ngpio.h
+          ngpio.c
+    tests/
+      test_poll_watch.nim
+      test_event_watch.nim
 
-C shim は Nim の `{.compile.}` pragma により、Nim アプリケーションと一緒に
-コンパイルされます。
-
-Nim 側の binding は生成済みファイルとして repository に含める方針なので、
-通常利用時に Futhark や libclang は不要です。
+C shim は Nim の `{.compile.}` pragma でアプリケーションに組み込まれます。生成済み風のNim bindingもリポジトリに含めているため、通常利用者は Futhark や libclang を用意する必要はありません。
 
 ## 基本的な使い方
 
-```nim
-import nim_gpiod
+    import nim_gpiod
 
-let gpio = newGpio("SIM2_CD", "my_app")
-echo gpio.getValue()
-gpio.close()
-```
-
-`newGpio()` は失敗時に `OSError` を送出します。明示的にエラーを扱う場合は
-`openGpio()` と `getValueRes()` を使います。
-
-```nim
-import nim_gpiod
-
-let gpioRes = openGpio("SIM2_CD", "my_app")
-if gpioRes.isErr:
-  echo gpioRes.error
-  quit 1
-
-let gpio = gpioRes.value
-defer:
-  gpio.close()
-
-let valueRes = gpio.getValueRes()
-if valueRes.isErr:
-  echo valueRes.error
-  quit 1
-
-echo valueRes.value
-```
-
-## エッジイベント待ち
-
-```nim
-import std/asyncdispatch
-
-import nim_gpiod
-
-proc main() {.async.} =
-  let gpio = newGpio("DI0", "my_app")
-  defer:
+    let gpio = newGpio("SIM2_CD", "my_app")
+    echo gpio.getValue()
     gpio.close()
 
-  let edge = await gpio.waitEvent(Edge.Both)
-  echo edge
+`newGpio()` は失敗時に `OSError` を送出します。明示的にエラーを扱う場合は `openGpio()` と `getValueRes()` を使います。
 
-waitFor main()
-```
+    import nim_gpiod
 
-`waitEvent()` は従来互換を意識して、検出した edge だけを返します。
+    let gpioRes = openGpio("SIM2_CD", "my_app")
+    if gpioRes.isErr:
+      echo gpioRes.error
+      quit 1
 
-timestamp や sequence number が必要な場合は、`waitEventInfo()` または
-`waitEventRes()` を使います。
+    let gpio = gpioRes.value
+    defer:
+      gpio.close()
 
-```nim
-let ev = await gpio.waitEventInfo(Edge.Both)
-echo ev.edge
-echo ev.timestampNs
-echo ev.seqno
-echo ev.lineSeqno
-```
+    let valueRes = gpio.getValueRes()
+    if valueRes.isErr:
+      echo valueRes.error
+      quit 1
+
+    echo valueRes.value
+
+## edge event を待つ
+
+検出した edge だけが必要な場合は `waitEdge()` を使います。
+
+    import std/asyncdispatch
+    import nim_gpiod
+
+    proc main() {.async.} =
+      let gpio = newGpio("DI0", "my_app")
+      defer:
+        gpio.close()
+
+      let edge = await gpio.waitEdge(Edge.Both)
+      echo edge
+
+    waitFor main()
+
+timestamp や sequence number が必要な場合は `waitEventInfo()` または `waitEventRes()` を使います。
+
+    import std/asyncdispatch
+    import nim_gpiod
+
+    proc main() {.async.} =
+      let gpio = newGpio("DI0", "my_app")
+      defer:
+        gpio.close()
+
+      let ev = await gpio.waitEventInfo(Edge.Both)
+      echo ev.edge
+      echo ev.value
+      echo ev.timestampNs
+      echo ev.seqno
+      echo ev.lineSeqno
+
+    waitFor main()
+
+`waitEventInfo()` は失敗時に `OSError` を送出します。`waitEventRes()` は代わりに `GE[Event]` を返します。
+
+## 旧API互換
+
+Nimでは `wait_event` と `waitEvent` のような識別子は同じ名前として扱われます。そのため、旧API互換の関数は `waitEvent()` として提供します。
+
+次のような旧コードはそのまま使えます。
+
+    let event = await gpio.wait_event(Edge.Both, 100)
+    echo event.edge
+    echo event.value
+
+これは Nim 上では次の呼び出しとして解決されます。
+
+    let event = await gpio.waitEvent(Edge.Both, 100)
+
+第2引数は timeout ではなく debounce interval milliseconds です。
+
+互換APIの動作は次の通りです。
+
+1. 最初の edge event を待つ
+2. debounce interval の間、追加の edge event を待つ
+3. 追加edgeが来た場合は、最後のeventを保持して debounce 待ちを繰り返す
+4. debounce interval 中に追加edgeが来なくなったら確定する
+5. 最後に現在のGPIO値を読み取り、`Event.value` に格納する
+
+これにより、旧 `wait_event()` と同じように、`Event.value` は debounce 後に安定した値を表します。
+
+新しいコードでは次の使い分けを推奨します。
+
+- edge だけ必要なら `waitEdge(edge, timeoutMs)`
+- timestamp や sequence number 付きの event が必要なら `waitEventInfo(edge, timeoutMs)`
+- 旧APIと同じ debounce 動作が必要なら `waitEvent(edge, debounceMs)`
 
 ## active-low
 
-論理的に active-low の入力信号では、open 時に `activeLow = true` を指定します。
+論理的に active-low の入力信号では、lineを開くときに `activeLow = true` を指定します。
 
-```nim
-let gpio = newGpio("DI0", "my_app", activeLow = true)
-```
+    let gpio = newGpio("DI0", "my_app", activeLow = true)
 
-Nim 側の API では、できるだけ生の電気レベルではなく、論理値として扱えることを
-意図しています。
+Nim APIとしては、生の電気レベルではなく論理値を返すことを意図しています。
 
-## ポーリングテスト
+## polling test
 
-I2C GPIO expander などでは、入力値は読めるが、エッジイベント用の interrupt が
-使えない場合があります。
+I2C GPIO expander のように、入力値は読めるが割り込み線が配線されておらず edge event を使えないGPIO providerがあります。
 
-そのような line には、ポーリングテストを使います。
+そのようなlineでは polling test を使います。
 
-```sh
-nim c -d:release --cpu:arm64 tests/test_poll_watch.nim
-./tests/test_poll_watch SIM2_CD 100
-```
+    nim c -d:release --cpu:arm64 tests/test_poll_watch.nim
+    ./tests/test_poll_watch SIM2_CD 100
 
 出力例:
 
-```text
-line       : SIM2_CD
-intervalMs : 100
-activeLow  : false
-2026-05-08 19:27:54.272 value=0 initial
-2026-05-08 19:28:24.513 value=1 changed from 0
-2026-05-08 19:28:25.819 value=0 changed from 1
-```
+    line       : SIM2_CD
+    intervalMs : 100
+    activeLow  : false
+    2026-05-08 19:27:54.272 value=0 initial
+    2026-05-08 19:28:24.513 value=1 changed from 0
+    2026-05-08 19:28:25.819 value=0 changed from 1
 
-## エッジイベントテスト
+## edge event test
 
-エッジイベントに対応している GPIO line では、次のように確認できます。
+edge event をサポートするGPIO lineでは次のテストを使います。
 
-```sh
-nim c -d:release --cpu:arm64 tests/test_event_watch.nim
-./tests/test_event_watch DI0 both
-```
+    nim c -d:release --cpu:arm64 tests/test_event_watch.nim
+    ./tests/test_event_watch DI0 both
 
-入力値は読めるのに edge request が `No such device or address` で失敗する場合、
-その GPIO provider が対象 line の interrupt に対応していないか、board 側の
-Device Tree 等で interrupt が定義されていない可能性があります。
+line自体は読めるのに edge request が `No such device or address` で失敗する場合、そのGPIO providerが対象lineの割り込みをサポートしていないか、ボード設定上で割り込み線が正しく記述されていない可能性があります。
 
-## 公開 API 概要
+## Public API overview
 
-### 型
+### Types
 
-```nim
-type
-  Edge {.pure.} = enum
-    Falling
-    Rising
-    Both
+    type
+      Edge {.pure.} = enum
+        Falling
+        Rising
+        Both
 
-  EventEdge {.pure.} = enum
-    Falling
-    Rising
+      EventEdge {.pure.} = enum
+        Falling
+        Rising
 
-  Event = object
-    edge: EventEdge
-    timestampNs: uint64
-    seqno: uint32
-    lineSeqno: uint32
-```
+      Event = object
+        edge: Edge
+        value: int
+        timestampNs: uint64
+        seqno: uint32
+        lineSeqno: uint32
 
-### open
+`Event.value` は旧アプリケーションとの互換性のために残しています。raw event APIでは edge 方向から生成されます。旧互換の `waitEvent(edge, debounceMs)` APIでは、debounce 後に実際に読み取ったGPIO値で上書きされます。
 
-```nim
-proc openGpio(
-  lineName: string,
-  consumer = "nim_gpiod",
-  activeLow = false
-): GE[AsyncGpio]
+### Open
 
-proc openGpioByChipOffset(
-  chipPath: string,
-  offset: uint,
-  consumer = "nim_gpiod",
-  activeLow = false
-): GE[AsyncGpio]
-```
+    proc openGpio(
+      lineName: string,
+      consumer = "nim_gpiod",
+      activeLow = false
+    ): GE[AsyncGpio]
 
-### 互換コンストラクタ
+    proc openGpioByChipOffset(
+      chipPath: string,
+      offset: uint,
+      consumer = "nim_gpiod",
+      activeLow = false
+    ): GE[AsyncGpio]
 
-```nim
-proc newGpio(
-  lineName: string,
-  consumer = "nim_gpiod",
-  activeLow = false
-): AsyncGpio
+### Compatibility constructors
 
-proc newGpioByChipOffset(
-  chipPath: string,
-  offset: uint,
-  consumer = "nim_gpiod",
-  activeLow = false
-): AsyncGpio
-```
+    proc newGpio(
+      lineName: string,
+      consumer = "nim_gpiod",
+      activeLow = false
+    ): AsyncGpio
 
-### 値読み取り
+    proc newGpioByChipOffset(
+      chipPath: string,
+      offset: uint,
+      consumer = "nim_gpiod",
+      activeLow = false
+    ): AsyncGpio
 
-```nim
-proc getValueRes(self: AsyncGpio): GE[int]
-proc getValue(self: AsyncGpio): int
-```
+### Read
 
-### エッジイベント
+    proc getValueRes(self: AsyncGpio): GE[int]
+    proc getValue(self: AsyncGpio): int
 
-```nim
-proc waitEventRes(
-  self: AsyncGpio,
-  edge: Edge,
-  timeoutMs = -1
-): Future[GE[Event]]
+### Edge events
 
-proc waitEventInfo(
-  self: AsyncGpio,
-  edge: Edge,
-  timeoutMs = -1
-): Future[Event]
+    proc waitEventRes(
+      self: AsyncGpio,
+      edge: Edge,
+      timeoutMs = -1
+    ): Future[GE[Event]]
 
-proc waitEvent(
-  self: AsyncGpio,
-  edge: Edge,
-  timeoutMs = -1
-): Future[Edge]
-```
+    proc waitEventInfo(
+      self: AsyncGpio,
+      edge: Edge,
+      timeoutMs = -1
+    ): Future[Event]
 
-### close
+    proc waitEdge(
+      self: AsyncGpio,
+      edge: Edge,
+      timeoutMs = -1
+    ): Future[Edge]
 
-```nim
-proc close(self: AsyncGpio)
-proc isOpen(self: AsyncGpio): bool
-```
+    proc waitEvent(
+      self: AsyncGpio,
+      edge: Edge,
+      debounceMs: int
+    ): Future[Event]
 
-## 補足
+### Close
 
-このライブラリは、産業用機器でよくあるデジタル入力と、単純な edge 監視を主な
-対象にしています。
+    proc close(self: AsyncGpio)
+    proc isOpen(self: AsyncGpio): bool
 
-現時点では、pull-up/down bias、drive mode、open-drain、open-source、
-multi-line request などは公開 API として扱っていません。これらは想定用途では
-基板側のハードウェア設計で決めるもの、という考え方です。
+## Notes
+
+このライブラリは、産業機器でよく使うデジタル入力と単純な edge monitoring に意図的に絞っています。
+
+現時点では、pull-up/down bias、drive mode、open-drain、open-source、multi-line request API は公開していません。想定用途では、これらの設定は多くの場合ボードレベルのハードウェア設計側で決まるためです。
 
 ## License
 
