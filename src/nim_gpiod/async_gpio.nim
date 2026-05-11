@@ -1,6 +1,5 @@
 import std/asyncdispatch
 import std/strformat
-
 import ./bindings/c_api
 import ./errors
 import ./types
@@ -94,12 +93,12 @@ proc toNgpioEdge(edge: Edge): NgpioEdge =
 # ------------------------------------------------------------------------------
 #
 # ------------------------------------------------------------------------------
-proc toEventEdge(edge: NgpioEventEdge): EventEdge =
+proc toEdge(edge: NgpioEventEdge): Edge =
   case edge
   of NgpioEventFalling:
-    result = EventEdge.Falling
+    result = Edge.Falling
   of NgpioEventRising:
-    result = EventEdge.Rising
+    result = Edge.Rising
 
 # ------------------------------------------------------------------------------
 #
@@ -270,9 +269,7 @@ proc waitEventResRaw(self: AsyncGpio, edge: Edge): Future[GE[Event]] =
 
   proc cb(fd: AsyncFD): bool =
     var rawEvent: NgpioEvent
-
     let readRc = ngpioReadEvent(self.gpio, addr rawEvent)
-
     self.cleanupEventRequest()
 
     if retFuture.finished:
@@ -285,39 +282,33 @@ proc waitEventResRaw(self: AsyncGpio, edge: Edge): Future[GE[Event]] =
       ))
       return true
 
+    let evEdge = toEdge(rawEvent.edge)
     let ev = Event(
-      edge: toEventEdge(rawEvent.edge),
+      edge: evEdge,
+      value: valueFromEdge(evEdge),
       timestampNs: rawEvent.timestampNs,
       seqno: rawEvent.seqno,
       lineSeqno: rawEvent.lineSeqno
     )
-
     retFuture.complete(GE[Event].ok(ev))
     return true
 
   addRead(self.fd, cb)
-
   result = retFuture
 
 # ------------------------------------------------------------------------------
 #
 # ------------------------------------------------------------------------------
-proc waitEventRes*(
-  self: AsyncGpio,
-  edge: Edge,
-  timeoutMs = -1
-): Future[GE[Event]] {.async.} =
+proc waitEventRes*(self: AsyncGpio, edge: Edge, timeoutMs = -1): Future[GE[Event]]
+    {.async.} =
   let fut = self.waitEventResRaw(edge)
-
   if timeoutMs < 0:
     result = await fut
     return
-
   let completed = await fut.withTimeout(timeoutMs)
   if completed:
     result = fut.read()
     return
-
   self.cleanupEventRequest()
   result = fail[Event](
     ekTimeout,
@@ -327,46 +318,41 @@ proc waitEventRes*(
 # ------------------------------------------------------------------------------
 #
 # ------------------------------------------------------------------------------
-proc waitEventInfo*(
-  self: AsyncGpio,
-  edge: Edge,
-  timeoutMs = -1
-): Future[Event] {.async.} =
+proc waitEventInfo*(self: AsyncGpio, edge: Edge, timeoutMs = -1): Future[Event]
+    {.async.} =
   let res = await self.waitEventRes(edge, timeoutMs)
   if res.isErr:
     raise newException(OSError, $res.error)
-
   result = res.value
 
 # ------------------------------------------------------------------------------
 #
 # ------------------------------------------------------------------------------
-proc waitEvent*(
-  self: AsyncGpio,
-  edge: Edge,
-  timeoutMs = -1
-): Future[Edge] {.async.} =
+proc waitEdge*(self: AsyncGpio, edge: Edge, timeoutMs = -1): Future[Edge] {.async.} =
   let ev = await self.waitEventInfo(edge, timeoutMs)
-  result = toEdge(ev.edge)
+  result = ev.edge
 
 # ------------------------------------------------------------------------------
-#
+# Old API compatibility
 # ------------------------------------------------------------------------------
-proc waitEdge*(
-  self: AsyncGpio,
-  edge: Edge,
-  timeoutMs = -1
-): Future[Edge] =
-  result = self.waitEvent(edge, timeoutMs)
-
-# ------------------------------------------------------------------------------
-#
-# ------------------------------------------------------------------------------
-proc wait_edge*(
-  self: AsyncGpio,
-  edge: Edge
-): Future[Edge] =
-  result = self.waitEvent(edge)
+proc waitEvent*(self: AsyncGpio, edge: Edge, debounceMs: int): Future[Event] {.async.} =
+  let firstRes = await self.waitEventRes(edge, -1)
+  if firstRes.isErr:
+    raise newException(OSError, $firstRes.error)
+  var ev = firstRes.value
+  while debounce_ms > 0:
+    let nextRes = await self.waitEventRes(edge, debounceMs)
+    if nextRes.isOk:
+      ev = nextRes.value
+    elif nextRes.error.kind == ekTimeout:
+      break
+    else:
+      raise newException(OSError, $nextRes.error)
+  let valueRes = self.getValueRes()
+  if valueRes.isErr:
+    raise newException(OSError, $valueRes.error)
+  ev.value = valueRes.value
+  result = ev
 
 # ------------------------------------------------------------------------------
 #
